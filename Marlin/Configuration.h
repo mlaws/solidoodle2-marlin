@@ -11,6 +11,9 @@
 #define STRING_VERSION_CONFIG_H __DATE__ " " __TIME__ // build date and time
 #define STRING_CONFIG_H_AUTHOR "Lawsy" //Who made the changes.
 
+// change to 3 for SD3
+#define SOLIDOODLE_VERSION 2 
+
 // SERIAL_PORT selects which serial port should be used for communication with the host.
 // This allows the connection of wireless adapters (for instance) to non-default port pins.
 // Serial port 0 is still used by the Arduino bootloader regardless of this setting.
@@ -255,6 +258,27 @@ const bool Z_ENDSTOPS_INVERTING = false; // set to true to invert the logic of t
 #define min_software_endstops false //If true, axis won't move to coordinates less than HOME_POS.
 #define max_software_endstops false  //If true, axis won't move to coordinates greater than the defined lengths below.
 // Travel limits after homing
+#if SOLIDOODLE_VERSION == 3
+
+#define X_MAX_POS 209
+#define X_MIN_POS 0
+#define Y_MAX_POS 200
+#define Y_MIN_POS 0
+#define Z_MAX_POS 194
+#define Z_MIN_POS 0
+
+
+// The position of the homing switches
+//#define MANUAL_HOME_POSITIONS  // If defined, MANUAL_*_HOME_POS below will be used
+//#define BED_CENTER_AT_0_0  // If defined, the center of the bed is at (X=0, Y=0)
+
+//Manual homing switch locations:
+#define MANUAL_X_HOME_POS 209
+#define MANUAL_Y_HOME_POS 200
+#define MANUAL_Z_HOME_POS 0
+
+#else //assume SD2
+
 #define X_MAX_POS 159
 #define X_MIN_POS 0
 #define Y_MAX_POS 150
@@ -262,9 +286,6 @@ const bool Z_ENDSTOPS_INVERTING = false; // set to true to invert the logic of t
 #define Z_MAX_POS 150
 #define Z_MIN_POS 0
 
-#define X_MAX_LENGTH (X_MAX_POS - X_MIN_POS)
-#define Y_MAX_LENGTH (Y_MAX_POS - Y_MIN_POS)
-#define Z_MAX_LENGTH (Z_MAX_POS - Z_MIN_POS)
 
 // The position of the homing switches
 //#define MANUAL_HOME_POSITIONS  // If defined, MANUAL_*_HOME_POS below will be used
@@ -274,6 +295,13 @@ const bool Z_ENDSTOPS_INVERTING = false; // set to true to invert the logic of t
 #define MANUAL_X_HOME_POS 159
 #define MANUAL_Y_HOME_POS 150
 #define MANUAL_Z_HOME_POS 0
+
+#endif
+
+#define X_MAX_LENGTH (X_MAX_POS - X_MIN_POS)
+#define Y_MAX_LENGTH (Y_MAX_POS - Y_MIN_POS)
+#define Z_MAX_LENGTH (Z_MAX_POS - Z_MIN_POS)
+
 
 //// MOVEMENT SETTINGS
 #define NUM_AXIS 4 // The axis order in all axis related arrays is X, Y, Z, E
