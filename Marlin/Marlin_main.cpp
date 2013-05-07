@@ -40,6 +40,7 @@
 #include "language.h"
 #include "pins_arduino.h"
 #include "ZWobble.h"
+#include "Hysteresis.h"
 
 #if DIGIPOTSS_PIN > -1
 #include <SPI.h>
@@ -845,6 +846,7 @@ void process_commands()
     {
       
       DECLARE_ZWOBBLE_MCODES(96, 97)
+      DECLARE_HYSTERESIS_MCODES(98, 99)
       
 #ifdef ULTIPANEL
     case 0: // M0 - Unconditional stop - Wait for user button press on LCD
