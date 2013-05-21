@@ -57,8 +57,8 @@
 #include "temperature.h"
 #include "ultralcd.h"
 #include "language.h"
-#include "ZWobble.h"
-#include "Hysteresis.h"
+#include "ZWobble.h" //{SD Patch}
+#include "Hysteresis.h" //{SD Patch}
 
 //===========================================================================
 //=============================public variables ============================
@@ -497,9 +497,9 @@ float junction_deviation = 0.1;
 // calculation the caller must also provide the physical length of the line in millimeters.
 void plan_buffer_line(const float &x, const float &y, const float &z, const float &e, float feed_rate, const uint8_t &extruder)
 {
-  zwobble.InsertCorrection(z);
-  hysteresis.InsertCorrection(x,y,z,e); 
-  
+  zwobble.InsertCorrection(z); //{SD Patch}
+  hysteresis.InsertCorrection(x,y,z,e); //{SD Patch}
+
   // Calculate the buffer head after we push this byte
   int next_buffer_head = next_block_index(block_buffer_head);
 
@@ -587,8 +587,16 @@ void plan_buffer_line(const float &x, const float &y, const float &z, const floa
   block->active_extruder = extruder;
 
   //enable active axes
+  #ifdef COREXY
+  if((block->steps_x != 0) || (block->steps_y != 0))
+  {
+    enable_x();
+    enable_y();
+  }
+  #else
   if(block->steps_x != 0) enable_x();
   if(block->steps_y != 0) enable_y();
+  #endif
 #ifndef Z_LATE_ENABLE
   if(block->steps_z != 0) enable_z();
 #endif
@@ -898,4 +906,13 @@ void allow_cold_extrudes(bool allow)
 #ifdef PREVENT_DANGEROUS_EXTRUDE
   allow_cold_extrude=allow;
 #endif
+}
+
+// Calculate the steps/s^2 acceleration rates, based on the mm/s^s
+void reset_acceleration_rates()
+{
+	for(int8_t i=0; i < NUM_AXIS; i++)
+        {
+        axis_steps_per_sqr_second[i] = max_acceleration_units_per_sq_second[i] * axis_steps_per_unit[i];
+        }
 }

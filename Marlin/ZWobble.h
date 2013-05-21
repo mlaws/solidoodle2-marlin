@@ -99,7 +99,7 @@
      if (code_seen('A')) zwobble.setAmplitude(code_value() );		\
      if (code_seen('W')) zwobble.setPeriod(code_value() );		\
      if (code_seen('P')) zwobble.setPhase(code_value() );		\
-     float zVal = -1, hVal = -1, lVal = -1;                             \     
+     float zVal = -1, hVal = -1, lVal = -1;                             \
      if (code_seen('Z')) zVal = code_value();                           \
      if (code_seen('H')) hVal = code_value();                           \
      if (code_seen('L')) lVal = code_value();                           \
@@ -129,11 +129,9 @@ public:
   void setVerbosity( boolean _verbosity );
 
 private:
-  float         m_amplitude, m_puls, m_phase;
-  float  m_scalingFactor;
+  float m_amplitude, m_puls, m_phase;
   boolean m_consistent;
-  boolean m_sinusoidal;
-  
+
   int lutSize;
   float zLut[STEPS_IN_ZLUT][2];
   void calculateLut();
@@ -142,7 +140,11 @@ private:
   float findInLut(float);
   float findZRod(float);
   boolean areParametersConsistent();
+
   float lastZ, lastZRod;
+  float m_scalingFactor;
+  boolean m_sinusoidal;
+
 };
 
 //===========================================================================

@@ -39,8 +39,8 @@
 #include "ConfigurationStore.h"
 #include "language.h"
 #include "pins_arduino.h"
-#include "ZWobble.h"
-#include "Hysteresis.h"
+#include "ZWobble.h" //{SD Patch}
+#include "Hysteresis.h" //{SD Patch}
 
 #if DIGIPOTSS_PIN > -1
 #include <SPI.h>
@@ -99,8 +99,6 @@
 //        or use S<seconds> to specify an inactivity timeout, after which the steppers will be disabled.  S0 to disable the timeout.
 // M85  - Set inactivity shutdown timer with parameter S<seconds>. To disable set zero (default)
 // M92  - Set axis_steps_per_unit - same syntax as G92
-// M96 - Report status of ZWobble addon
-// M97 - Set ZWobble parameters A<amplitude_in_mm> W<period_in_mm> P<phase_in_degrees> or Z<zRod> H<zActual>
 // M114 - Output current position to serial port 
 // M115	- Capabilities string
 // M117 - display message
@@ -117,9 +115,11 @@
 // M207 - set retract length S[positive mm] F[feedrate mm/sec] Z[additional zlift/hop]
 // M208 - set recover=unretract length S[positive mm surplus to the M207 S*] F[feedrate mm/sec]
 // M209 - S<1=true/0=false> enable automatic retract detect if the slicer did not support G10/11: every normal extrude-only move will be classified as retract depending on the direction.
+// M218 - set hotend offset (in mm): T<extruder_number> X<offset_on_X> Y<offset_on_Y>
 // M220 S<factor in percent>- set speed factor override percentage
 // M221 S<factor in percent>- set extrude factor override percentage
 // M240 - Trigger a camera to take a photograph
+// M300 - Play beepsound S<frequency Hz> P<duration ms>
 // M301 - Set PID parameters P I and D
 // M302 - Allow cold extrudes
 // M303 - PID relay autotune S<temperature> sets the target temperature. (default target temperature = 150C)
@@ -135,6 +135,7 @@
 // M908 - Control digital trimpot directly.
 // M350 - Set microstepping mode.
 // M351 - Toggle MS1 MS2 pins directly.
+// M928 - Start SD logging (M928 filename.g) - ended by M29
 // M999 - Restart after being stopped by error
 
 //Stepper Movement Variables
@@ -159,6 +160,14 @@ float current_position[NUM_AXIS] = { 0.0, 0.0, 0.0, 0.0 };
 float add_homeing[3]={0,0,0};
 float min_pos[3] = { X_MIN_POS, Y_MIN_POS, Z_MIN_POS };
 float max_pos[3] = { X_MAX_POS, Y_MAX_POS, Z_MAX_POS };
+// Extruder offset, only in XY plane
+#if EXTRUDERS > 1
+float extruder_offset[2][EXTRUDERS] = { 
+#if defined(EXTRUDER_OFFSET_X) && defined(EXTRUDER_OFFSET_Y)
+  EXTRUDER_OFFSET_X, EXTRUDER_OFFSET_Y 
+#endif
+}; 
+#endif
 uint8_t active_extruder = 0;
 int fanSpeed=0;
 
@@ -356,13 +365,8 @@ void setup()
     fromsd[i] = false;
   }
   
-  Config_RetrieveSettings(); // loads data from EEPROM if available
-
-  for(int8_t i=0; i < NUM_AXIS; i++)
-  {
-    axis_steps_per_sqr_second[i] = max_acceleration_units_per_sq_second[i] * axis_steps_per_unit[i];
-  }
-
+  // loads data from EEPROM if available else uses defaults (and resets step acceleration rate)
+  Config_RetrieveSettings(); 
 
   tp_init();    // Initialize temperature loop 
   plan_init();  // Initialize planner;
@@ -371,6 +375,14 @@ void setup()
   setup_photpin();
   
   lcd_init();
+  
+  #ifdef CONTROLLERFAN_PIN
+    SET_OUTPUT(CONTROLLERFAN_PIN); //Set pin used for driver cooling fan
+  #endif
+  
+  #ifdef EXTRUDERFAN_PIN
+    SET_OUTPUT(EXTRUDERFAN_PIN); //Set pin used for extruder cooling fan
+  #endif
 }
 
 
@@ -389,7 +401,14 @@ void loop()
 	if(strstr_P(cmdbuffer[bufindr], PSTR("M29")) == NULL)
 	{
 	  card.write_command(cmdbuffer[bufindr]);
-	  SERIAL_PROTOCOLLNPGM(MSG_OK);
+          if(card.logging)
+          {
+            process_commands();
+          }
+          else
+          {
+            SERIAL_PROTOCOLLNPGM(MSG_OK);
+          }
 	}
 	else
 	{
@@ -844,11 +863,9 @@ void process_commands()
   {
     switch( (int)code_value() ) 
     {
-      
-      DECLARE_ZWOBBLE_MCODES(96, 97)
-      DECLARE_HYSTERESIS_MCODES(98, 99)
-      
-#ifdef ULTIPANEL
+    DECLARE_ZWOBBLE_MCODES(96, 97) //{SD Patch}
+    DECLARE_HYSTERESIS_MCODES(98, 99) //{SD Patch}
+    #ifdef ULTIPANEL
     case 0: // M0 - Unconditional stop - Wait for user button press on LCD
     case 1: // M1 - Conditional stop - Wait for user button press on LCD
     {
@@ -948,6 +965,15 @@ void process_commands()
 	 card.removeFile(strchr_pointer + 4);
 	}
 	break;
+    case 928: //M928 - Start SD write
+      starpos = (strchr(strchr_pointer + 5,'*'));
+      if(starpos != NULL){
+        char* npos = strchr(cmdbuffer[bufindr], 'N');
+        strchr_pointer = strchr(npos,' ') + 1;
+        *(starpos-1) = '\0';
+      }
+      card.openLogFile(strchr_pointer+5);
+      break;
 	
 #endif //SDSUPPORT
 
@@ -1296,9 +1322,10 @@ void process_commands()
         if(code_seen(axis_codes[i]))
         {
           max_acceleration_units_per_sq_second[i] = code_value();
-          axis_steps_per_sqr_second[i] = code_value() * axis_steps_per_unit[i];
         }
       }
+      // steps per sq second need to be updated to agree with the units per sq second (as they are what is used in the planner)
+	  reset_acceleration_rates();
       break;
     #if 0 // Not used for Sprinter/grbl gen6
     case 202: // M202
@@ -1361,7 +1388,6 @@ void process_commands()
         retract_recover_feedrate = code_value() ;
       }
     }break;
-    
     case 209: // M209 - S<1=true/0=false> enable automatic retract detect if the slicer did not support G10/11: every normal extrude-only move will be classified as retract depending on the direction.
     {
       if(code_seen('S')) 
@@ -1380,6 +1406,32 @@ void process_commands()
       }
       
     }break;
+    #endif // FWRETRACT
+    #if EXTRUDERS > 1
+    case 218: // M218 - set hotend offset (in mm), T<extruder_number> X<offset_on_X> Y<offset_on_Y>
+    {
+      if(setTargetedHotend(218)){
+        break;
+      }
+      if(code_seen('X')) 
+      {
+        extruder_offset[X_AXIS][tmp_extruder] = code_value();
+      }
+      if(code_seen('Y'))
+      {
+        extruder_offset[Y_AXIS][tmp_extruder] = code_value();
+      }
+      SERIAL_ECHO_START;
+      SERIAL_ECHOPGM(MSG_HOTEND_OFFSET);
+      for(tmp_extruder = 0; tmp_extruder < EXTRUDERS; tmp_extruder++) 
+      {
+         SERIAL_ECHO(" ");
+         SERIAL_ECHO(extruder_offset[X_AXIS][tmp_extruder]);
+         SERIAL_ECHO(",");
+         SERIAL_ECHO(extruder_offset[Y_AXIS][tmp_extruder]);
+      }
+      SERIAL_ECHOLN("");
+    }break;
     #endif
     case 220: // M220 S<factor in percent>- set speed factor override percentage
     {
@@ -1397,27 +1449,44 @@ void process_commands()
       }
     }
     break;
+    
+    #if defined(LARGE_FLASH) && LARGE_FLASH == true && defined(BEEPER) && BEEPER > -1
+    case 300: // M300
+    {
+      int beepS = 1;
+      int beepP = 1000;
+      if(code_seen('S')) beepS = code_value();
+      if(code_seen('P')) beepP = code_value();
+      tone(BEEPER, beepS);
+      delay(beepP);
+      noTone(BEEPER);
+    }
+    break;
+    #endif // M300
 
     #ifdef PIDTEMP
     case 301: // M301
       {
         if(code_seen('P')) Kp = code_value();
-        if(code_seen('I')) Ki = code_value()*PID_dT;
-        if(code_seen('D')) Kd = code_value()/PID_dT;
+        if(code_seen('I')) Ki = scalePID_i(code_value());
+        if(code_seen('D')) Kd = scalePID_d(code_value());
+
         #ifdef PID_ADD_EXTRUSION_RATE
         if(code_seen('C')) Kc = code_value();
         #endif
+        
         updatePID();
         SERIAL_PROTOCOL(MSG_OK);
 		SERIAL_PROTOCOL(" p:");
         SERIAL_PROTOCOL(Kp);
         SERIAL_PROTOCOL(" i:");
-        SERIAL_PROTOCOL(Ki/PID_dT);
+        SERIAL_PROTOCOL(unscalePID_i(Ki));
         SERIAL_PROTOCOL(" d:");
-        SERIAL_PROTOCOL(Kd*PID_dT);
+        SERIAL_PROTOCOL(unscalePID_d(Kd));
         #ifdef PID_ADD_EXTRUSION_RATE
         SERIAL_PROTOCOL(" c:");
-        SERIAL_PROTOCOL(Kc*PID_dT);
+        //Kc does not have scaling applied above, or in resetting defaults
+        SERIAL_PROTOCOL(Kc);
         #endif
         SERIAL_PROTOCOLLN("");
       }
@@ -1427,16 +1496,17 @@ void process_commands()
     case 304: // M304
       {
         if(code_seen('P')) bedKp = code_value();
-        if(code_seen('I')) bedKi = code_value()*PID_dT;
-        if(code_seen('D')) bedKd = code_value()/PID_dT;
+        if(code_seen('I')) bedKi = scalePID_i(code_value());
+        if(code_seen('D')) bedKd = scalePID_d(code_value());
+
         updatePID();
         SERIAL_PROTOCOL(MSG_OK);
 		SERIAL_PROTOCOL(" p:");
         SERIAL_PROTOCOL(bedKp);
         SERIAL_PROTOCOL(" i:");
-        SERIAL_PROTOCOL(bedKi/PID_dT);
+        SERIAL_PROTOCOL(unscalePID_i(bedKi));
         SERIAL_PROTOCOL(" d:");
-        SERIAL_PROTOCOL(bedKd*PID_dT);
+        SERIAL_PROTOCOL(unscalePID_d(bedKd));
         SERIAL_PROTOCOLLN("");
       }
       break;
@@ -1642,11 +1712,12 @@ void process_commands()
     case 907: // M907 Set digital trimpot motor current using axis codes.
     {
       #if DIGIPOTSS_PIN > -1
-        for(int i=0;i<=NUM_AXIS;i++) if(code_seen(axis_codes[i])) digipot_current(i,code_value());
+        for(int i=0;i<NUM_AXIS;i++) if(code_seen(axis_codes[i])) digipot_current(i,code_value());
         if(code_seen('B')) digipot_current(4,code_value());
         if(code_seen('S')) for(int i=0;i<=4;i++) digipot_current(i,code_value());
       #endif
     }
+    break;
     case 908: // M908 Control digital trimpot directly.
     {
       #if DIGIPOTSS_PIN > -1
@@ -1661,7 +1732,7 @@ void process_commands()
     {
       #if X_MS1_PIN > -1
         if(code_seen('S')) for(int i=0;i<=4;i++) microstep_mode(i,code_value()); 
-        for(int i=0;i<=NUM_AXIS;i++) if(code_seen(axis_codes[i])) microstep_mode(i,(uint8_t)code_value());
+        for(int i=0;i<NUM_AXIS;i++) if(code_seen(axis_codes[i])) microstep_mode(i,(uint8_t)code_value());
         if(code_seen('B')) microstep_mode(4,code_value());
         microstep_readings();
       #endif
@@ -1673,11 +1744,11 @@ void process_commands()
       if(code_seen('S')) switch((int)code_value())
       {
         case 1:
-          for(int i=0;i<=NUM_AXIS;i++) if(code_seen(axis_codes[i])) microstep_ms(i,code_value(),-1);
+          for(int i=0;i<NUM_AXIS;i++) if(code_seen(axis_codes[i])) microstep_ms(i,code_value(),-1);
           if(code_seen('B')) microstep_ms(4,code_value(),-1);
           break;
         case 2:
-          for(int i=0;i<=NUM_AXIS;i++) if(code_seen(axis_codes[i])) microstep_ms(i,-1,code_value());
+          for(int i=0;i<NUM_AXIS;i++) if(code_seen(axis_codes[i])) microstep_ms(i,-1,code_value());
           if(code_seen('B')) microstep_ms(4,-1,code_value());
           break;
       }
@@ -1704,7 +1775,34 @@ void process_commands()
       SERIAL_ECHOLN(MSG_INVALID_EXTRUDER);
     }
     else {
-      active_extruder = tmp_extruder;
+      boolean make_move = false;
+      if(code_seen('F')) {
+        make_move = true;
+        next_feedrate = code_value();
+        if(next_feedrate > 0.0) {
+          feedrate = next_feedrate;
+        }
+      }
+      #if EXTRUDERS > 1
+      if(tmp_extruder != active_extruder) {
+        // Save current position to return to after applying extruder offset
+        memcpy(destination, current_position, sizeof(destination));
+        // Offset extruder (only by XY)
+        int i;
+        for(i = 0; i < 2; i++) {
+           current_position[i] = current_position[i] - 
+                                 extruder_offset[i][active_extruder] +
+                                 extruder_offset[i][tmp_extruder];
+        }
+        // Set the new active extruder and position
+        active_extruder = tmp_extruder;
+        plan_set_position(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS], current_position[E_AXIS]);
+        // Move to the old position if 'F' was in the parameters
+        if(make_move && Stopped == false) {
+           prepare_move();
+        }
+      }
+      #endif
       SERIAL_ECHO_START;
       SERIAL_ECHO(MSG_ACTIVE_EXTRUDER);
       SERIAL_PROTOCOLLN((int)active_extruder);
@@ -1881,7 +1979,7 @@ void controllerFan()
        || !READ(E2_ENABLE_PIN)
     #endif
     #if EXTRUDER > 1
-       || !READ(E2_ENABLE_PIN)
+       || !READ(E1_ENABLE_PIN)
     #endif
        || !READ(E0_ENABLE_PIN)) //If any of the drivers are enabled...    
     {
@@ -1895,6 +1993,27 @@ void controllerFan()
     else
     {
       WRITE(CONTROLLERFAN_PIN, HIGH); //... turn the fan on
+    }
+  }
+}
+#endif
+
+#ifdef EXTRUDERFAN_PIN
+unsigned long lastExtruderCheck = 0;
+
+void extruderFan()
+{
+  if ((millis() - lastExtruderCheck) >= 2500) //Not a time critical function, so we only check every 2500ms
+  {
+    lastExtruderCheck = millis();
+           
+    if (degHotend(active_extruder) < EXTRUDERFAN_DEC)
+    {
+      WRITE(EXTRUDERFAN_PIN, LOW); //... turn the fan off
+    }
+    else
+    {
+      WRITE(EXTRUDERFAN_PIN, HIGH); //... turn the fan on
     }
   }
 }
@@ -2066,6 +2185,9 @@ bool setTargetedHotend(int code){
           break;
         case 109:
           SERIAL_ECHO(MSG_M109_INVALID_EXTRUDER);
+          break;
+        case 218:
+          SERIAL_ECHO(MSG_M218_INVALID_EXTRUDER);
           break;
       }
       SERIAL_ECHOLN(tmp_extruder);
